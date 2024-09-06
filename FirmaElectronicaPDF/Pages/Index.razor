@@ -1,0 +1,102 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.Components.Forms;
+@using System.Text;
+@using Newtonsoft.Json;
+@using System.Security.Cryptography.X509Certificates;
+@inject IJSRuntime JS;
+
+<PageTitle>Index</PageTitle>
+
+<h1>Firmar documento PDF</h1>
+<InputFile OnChange="OnInputFileChange" accept=".pdf" />
+
+<script src="js/downloadFile.js"></script>
+
+@code {
+
+    /// <summary>
+    /// Evento del input al cargar un archivo PDF
+    /// </summary>
+    /// <param name="e">Archivo capturado</param>
+    /// <returns></returns>
+    private async Task OnInputFileChange(InputFileChangeEventArgs e)
+    {
+        IBrowserFile file = e.File;
+
+        if (file != null)
+        {
+            string base64 = await ConvertPdfToBase64(file);
+            byte[] pdfBytes = await PdfSignerAPI(base64);
+            await JS.InvokeVoidAsync("downloadPDF", pdfBytes, $"{file.Name}-SignedDocument.pdf");
+        }
+    }
+
+    /// <summary>
+    /// Convierte el archivo PDF en base64
+    /// </summary>
+    /// <param name="file">Archivo PDF</param>
+    /// <returns>Regresa el archivo pdf en formato base64</returns>
+    private async Task<string> ConvertPdfToBase64(IBrowserFile file)
+    {
+        using MemoryStream stream = new MemoryStream();
+        await file.OpenReadStream().CopyToAsync(stream);
+        byte[] fileBytes = stream.ToArray();
+
+        return Convert.ToBase64String(fileBytes);
+    }
+
+    /// <summary>
+    /// Realiza la petición al web services de PDFSigner
+    /// </summary>
+    /// <param name="base64PdfContent">PDF en base64</param>
+    /// <returns>Regresa el resultado de la petición en byte</returns>
+    private async Task<byte[]> PdfSignerAPI(string base64PdfContent)
+    {
+        HttpResponseMessage response = new HttpResponseMessage();
+        string urlApi = "https://localhost/signserver/process";
+        string responseBody = string.Empty;
+        byte[] pdfBytes = new byte[0];
+
+        var formData = new List<KeyValuePair<string, string>>
+        {
+            new KeyValuePair<string, string>("workerName", "PDFSigner"),
+            new KeyValuePair<string, string>("workerId", "2"),
+            new KeyValuePair<string, string>("data", base64PdfContent),
+            new KeyValuePair<string, string>("encoding", "base64")
+        };
+
+        FormUrlEncodedContent content = new FormUrlEncodedContent(formData);
+
+        using (var httpClient = CreateHttpClientWithCertificate())
+        {
+            response = await httpClient.PostAsync(urlApi, content);
+
+            response.EnsureSuccessStatusCode();
+            pdfBytes = await response.Content.ReadAsByteArrayAsync();
+        }
+
+        return pdfBytes;
+    }
+
+    /// <summary>
+    /// Configura el certificado CA para petición https
+    /// </summary>
+    /// <returns>Regresa el objeto con el certificado</returns>
+    private HttpClient CreateHttpClientWithCertificate()
+    {
+        string certPath = @"C:/Users/Certificados/Hennry Chan.p12";
+        string certPassword = "B29um]8h_PU24Qb";
+
+        X509Certificate2 certificate = new X509Certificate2(certPath, certPassword);
+
+        // Configurar HttpClientHandler para usar el certificado y omitir validación SSL
+        var handler = new HttpClientHandler
+        {
+            ClientCertificates = { certificate },
+            ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
+        };
+
+        return new HttpClient(handler);
+    }
+}
+
